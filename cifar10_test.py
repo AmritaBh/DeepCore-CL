@@ -11,6 +11,7 @@ from utils import *
 from datetime import datetime
 from time import sleep
 
+## this is for cifar 10
 
 def train(train_loader, args,  model, criterion, optimizer, epoch):
     """
