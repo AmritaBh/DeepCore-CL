@@ -39,6 +39,7 @@ class EarlyTrain(CoresetMethod):
                 self.num_classes_mismatch()
 
         self.dst_pretrain_dict = dst_pretrain_dict
+        print("earlytrain line 42 dst_pretrain_dict", dst_pretrain_dict)
         self.torchvision_pretrain = torchvision_pretrain
         self.if_dst_pretrain = (len(self.dst_pretrain_dict) != 0)
 
@@ -65,6 +66,11 @@ class EarlyTrain(CoresetMethod):
         self.model.train()
 
         print('\n=> Training Epoch #%d' % epoch)
+        # if self.selection_scheduler:
+        #     print("checking scheduler: ", self.selection_scheduler.__dict__)
+
+        print('current lr {:.5e}'.format(self.model_optimizer.param_groups[0]['lr']))
+
         trainset_permutation_inds = np.random.permutation(list_of_train_idx)
         batch_sampler = torch.utils.data.BatchSampler(trainset_permutation_inds, batch_size=self.args.selection_batch,
                                                       drop_last=False)
@@ -78,19 +84,22 @@ class EarlyTrain(CoresetMethod):
             inputs, targets = inputs.to(self.args.device), targets.to(self.args.device)
 
             # Forward propagation, compute loss, get predictions
+            # self.model_optimizer.zero_grad()
             self.model_optimizer.zero_grad()
             outputs = self.model(inputs)
             loss = self.criterion(outputs, targets)
 
-            self.after_loss(outputs, loss, targets, trainset_permutation_inds[i], epoch)
+            # self.after_loss(outputs, loss, targets, trainset_permutation_inds[i], epoch)
 
             # Update loss, backward propagate, update optimizer
-            loss = loss.mean()
+            
+            # loss = loss.mean()  ## no need. Same value before & after mean
 
             self.while_update(outputs, loss, targets, epoch, i, self.args.selection_batch)
 
             loss.backward()
             self.model_optimizer.step()
+            
         return self.finish_train()
 
     def run(self):
@@ -103,6 +112,8 @@ class EarlyTrain(CoresetMethod):
             self.args.channel, self.dst_pretrain_dict["num_classes"] if self.if_dst_pretrain else self.num_classes,
             pretrained=self.torchvision_pretrain,
             im_size=(224, 224) if self.torchvision_pretrain else self.args.im_size).to(self.args.device)
+
+        # print("model deets: ", self.model.__dict__)
 
         if self.args.device == "cpu":
             print("Using CPU.")
@@ -121,6 +132,10 @@ class EarlyTrain(CoresetMethod):
                                                    momentum=self.args.selection_momentum,
                                                    weight_decay=self.args.selection_weight_decay,
                                                    nesterov=self.args.selection_nesterov)
+
+        # if self.args.selection_optimizer == "SGD":
+        #     self.model_optimizer = torch.optim.SGD(self.model.parameters(), lr=self.args.selection_lr)
+
         elif self.args.selection_optimizer == "Adam":
             self.model_optimizer = torch.optim.Adam(self.model.parameters(), lr=self.args.selection_lr,
                                                     weight_decay=self.args.selection_weight_decay)
@@ -131,19 +146,39 @@ class EarlyTrain(CoresetMethod):
                                                                        weight_decay=self.args.selection_weight_decay,
                                                                        nesterov=self.args.selection_nesterov)
 
+        # Amrita: adding a LR scheduler here
+
+        # if self.args.selection_scheduler == "CosineAnnealingLR":
+        #     self.selection_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.model_optimizer, self.n_train * self.args.selection_epochs,
+        #                                                                eta_min=self.args.min_lr)
+
+        if self.args.selection_scheduler == "CosineAnnealingLR":
+            self.selection_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.model_optimizer, T_max=200)
+        elif self.args.selection_scheduler == "StepLR":
+                self.selection_scheduler = torch.optim.lr_scheduler.StepLR(self.model_optimizer, step_size=5,
+                                                            gamma=0.1)
+        else:
+            self.selection_scheduler = torch.optim.lr_scheduler.__dict__[self.args.scheduler](self.model_optimizer)
+        # self.scheduler.last_epoch = (start_epoch - 1) * len(train_loader)
+
         self.before_run()
 
         for epoch in range(self.epochs):
             list_of_train_idx = np.random.choice(np.arange(self.n_pretrain if self.if_dst_pretrain else self.n_train),
                                                  self.n_pretrain_size, replace=False)
             self.before_epoch()
+            # print("before entering train, ids: ", list_of_train_idx.tolist())
             self.train(epoch, list_of_train_idx)
+            self.selection_scheduler.step()
             if self.dst_test is not None and self.args.selection_test_interval > 0 and (
                     epoch + 1) % self.args.selection_test_interval == 0:
                 self.test(epoch)
             self.after_epoch()
 
-        return self.finish_run()
+        selected_indxs = self.finish_run()
+        print("AB: selected indices: ", selected_indxs)
+        return selected_indxs
+        # return self.finish_run()
 
     def test(self, epoch):
         self.model.no_grad = True

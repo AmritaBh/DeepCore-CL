@@ -16,6 +16,7 @@ class WeightedSubset(torch.utils.data.Subset):
         return self.dataset[self.indices[idx]], self.weights[idx]
 
 
+# Amrita: removed scheduler from the arguments below
 def train(train_loader, network, criterion, optimizer, scheduler, epoch, args, rec, if_weighted: bool = False):
     """Train for one epoch on the training set"""
     batch_time = AverageMeter('Time', ':6.3f')

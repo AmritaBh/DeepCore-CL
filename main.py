@@ -39,7 +39,7 @@ def main():
                         metavar='W', help='weight decay (default: 5e-4)',
                         dest='weight_decay')
     parser.add_argument("--nesterov", default=True, type=str_to_bool, help="if set nesterov")
-    parser.add_argument("--scheduler", default="CosineAnnealingLR", type=str, help=
+    parser.add_argument("--scheduler", default="StepLR", type=str, help=
     "Learning rate scheduler")
     parser.add_argument("--gamma", type=float, default=.5, help="Gamma value for StepLR")
     parser.add_argument("--step_size", type=float, default=50, help="Step size for StepLR")
@@ -68,9 +68,11 @@ def main():
                         dest='selection_weight_decay')
     parser.add_argument('--selection_optimizer', "-so", default="SGD",
                         help='optimizer to use whiling performing selection, e.g. SGD, Adam')
+    parser.add_argument("--selection_scheduler", "-ss", default="CosineAnnealingLR", type=str,
+     help="Selection Learning rate scheduler")
     parser.add_argument("--selection_nesterov", "-sn", default=True, type=str_to_bool,
                         help="if set nesterov whiling performing selection")
-    parser.add_argument('--selection_lr', '-slr', type=float, default=0.1, help='learning rate for selection')
+    parser.add_argument('--selection_lr', '-slr', type=float, default=0.01, help='learning rate for selection')
     parser.add_argument("--selection_test_interval", '-sti', default=1, type=int, help=
     "the number of training epochs to be preformed between two test epochs during selection (default: 1)")
     parser.add_argument("--selection_test_fraction", '-stf', type=float, default=1.,
@@ -137,9 +139,9 @@ def main():
                                                                                          fr=args.fraction)
 
         print('\n================== Exp %d ==================\n' % exp)
-        print("dataset: ", args.dataset, ", model: ", args.model, ", selection: ", args.selection, ", num_ex: ",
-              args.num_exp, ", epochs: ", args.epochs, ", fraction: ", args.fraction, ", seed: ", args.seed,
-              ", lr: ", args.lr, ", save_path: ", args.save_path, ", resume: ", args.resume, ", device: ", args.device,
+        print("dataset: ", args.dataset, ", model: ", args.model, ", selection: ", args.selection, ", num_ex: ",\
+              args.num_exp, ", epochs: ", args.epochs, ", fraction: ", args.fraction, ", seed: ", args.seed,\
+              ", lr: ", args.lr, ", save_path: ", args.save_path, ", resume: ", args.resume, ", device: ", args.device,\
               ", checkpoint_name: " + checkpoint_name if args.save_path != "" else "", "\n", sep="")
 
         channel, im_size, num_classes, class_names, mean, std, dst_train, dst_test = datasets.__dict__[args.dataset] \
@@ -156,24 +158,28 @@ def main():
                                   selection_method=args.uncertainty,
                                   balance=args.balance,
                                   greedy=args.submodular_greedy,
-                                  function=args.submodular
+                                  function=args.submodular,
+                                  dst_test=dst_test
                                   )
             method = methods.__dict__[args.selection](dst_train, args, args.fraction, args.seed, **selection_args)
-            subset = method.select()
-        print(len(subset["indices"]))
+            print("at method.select(), ", method)
+            # print("method dict: ", method.__dict__)
+            subset = method.select()  ## this training is not happening properly I think
+        print("selected coreset length", len(subset["indices"]))
 
         # Augmentation
-        if args.dataset == "CIFAR10" or args.dataset == "CIFAR100":
-            dst_train.transform = transforms.Compose(
-                [transforms.RandomCrop(args.im_size, padding=4, padding_mode="reflect"),
-                 transforms.RandomHorizontalFlip(), dst_train.transform])
-        elif args.dataset == "ImageNet":
-            dst_train.transform = transforms.Compose([
-                transforms.RandomResizedCrop(224),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                transforms.Normalize(mean, std)
-            ])
+        # AB: testing: commenting this out
+        # if args.dataset == "CIFAR10" or args.dataset == "CIFAR100":
+        #     dst_train.transform = transforms.Compose(
+        #         [transforms.RandomCrop(args.im_size, padding=4, padding_mode="reflect"),
+        #          transforms.RandomHorizontalFlip(), dst_train.transform])
+        # elif args.dataset == "ImageNet":
+        #     dst_train.transform = transforms.Compose([
+        #         transforms.RandomResizedCrop(224),
+        #         transforms.RandomHorizontalFlip(),
+        #         transforms.ToTensor(),
+        #         transforms.Normalize(mean, std)
+        #     ])
 
         # Handle weighted subset
         if_weighted = "weights" in subset.keys()
@@ -189,6 +195,7 @@ def main():
             test_loader = DataLoaderX(dst_test, batch_size=args.train_batch, shuffle=False,
                                       num_workers=args.workers, pin_memory=True)
         else:
+            print("checking train_batch in main.py: ", args.train_batch)
             train_loader = torch.utils.data.DataLoader(dst_subset, batch_size=args.train_batch, shuffle=True,
                                                        num_workers=args.workers, pin_memory=True)
             test_loader = torch.utils.data.DataLoader(dst_test, batch_size=args.train_batch, shuffle=False,
